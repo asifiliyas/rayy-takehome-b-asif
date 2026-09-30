@@ -1,0 +1,36 @@
+{
+  "codes": [
+    {
+      "code": "FIT12",
+      "percent_off_bps": 1200,
+      "cap_paise": 100000,
+      "expires_in_days": 21,
+      "partner_share_bps": 6500,
+      "rayy_share_bps": 3500
+    },
+    {
+      "code": "BIG40",
+      "percent_off_bps": 4000,
+      "cap_paise": 7500,
+      "expires_in_days": 21,
+      "partner_share_bps": 7500,
+      "rayy_share_bps": 2500
+    },
+    {
+      "code": "OLDFIT25",
+      "percent_off_bps": 2500,
+      "cap_paise": 12000,
+      "expires_in_days": -1,
+      "partner_share_bps": 7000,
+      "rayy_share_bps": 3000
+    },
+    {
+      "code": "HELLO8",
+      "percent_off_bps": 800,
+      "cap_paise": 15000,
+      "expires_in_days": 21,
+      "partner_share_bps": 5000,
+      "rayy_share_bps": 5000
+    }
+  ]
+}

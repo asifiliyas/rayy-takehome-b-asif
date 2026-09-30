@@ -12,6 +12,28 @@ class OrderItem(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class AppliedDiscount(BaseModel):
+    """A discount as recorded on an order, frozen at the moment it was
+    applied. The code's percentage/cap/split can change later (or the code
+    can expire); settlement must read this snapshot, not the live code."""
+
+    code: str
+    percent_off_bps: int
+    cap_paise: int
+    discount_paise: int
+    partner_share_bps: int
+    rayy_share_bps: int
+    partner_share_paise: int
+    rayy_share_paise: int
+    applied_at: datetime
+
+
+class PaymentRecord(BaseModel):
+    payment_id: str
+    amount_paise: int
+    received_at: datetime
+
+
 class Order(BaseModel):
     order_id: str
     partner_id: str
@@ -21,6 +43,8 @@ class Order(BaseModel):
     currency: str = "INR"
     status: str
     created_at: datetime
+    discount: AppliedDiscount | None = None
+    payment: PaymentRecord | None = None
 
 
 class DiscountCode(BaseModel):
@@ -38,3 +62,14 @@ class DiscountCode(BaseModel):
     expires_at: datetime
     partner_share_bps: int = Field(ge=0, le=10000)
     rayy_share_bps: int = Field(ge=0, le=10000)
+
+
+class ApplyDiscountRequest(BaseModel):
+    code: str
+
+
+class PaymentWebhookBody(BaseModel):
+    event: str
+    payment_id: str
+    order_id: str
+    amount_paise: int

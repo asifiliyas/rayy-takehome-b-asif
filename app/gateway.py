@@ -59,6 +59,9 @@ class StubGateway:
     def sign(self, body: bytes) -> str:
         return hmac.new(self.webhook_secret.encode(), body, hashlib.sha256).hexdigest()
 
+    def verify(self, body: bytes, signature: str) -> bool:
+        return hmac.compare_digest(self.sign(body), signature)
+
     def deliveries(self, payment: dict) -> list[tuple[dict, bytes]]:
         """Return the (headers, body) pairs the gateway would POST, in order."""
         body = self.webhook_body(payment)

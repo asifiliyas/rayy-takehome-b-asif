@@ -1,3 +1,5 @@
+import json
+
 from app.config import settings
 from app.gateway import SIGNATURE_HEADER, StubGateway
 
@@ -55,6 +57,29 @@ async def test_amount_mismatch_does_not_mark_order_paid(client):
     order = await client.get("/orders/ord_b_2001")
     assert order.json()["status"] == "pending"
     assert order.json()["payment"] is None
+
+
+async def test_wrong_event_type_is_rejected(client):
+    gateway = StubGateway(webhook_secret=settings.gateway_webhook_secret)
+    body = json.dumps(
+        {
+            "event": "payment.refunded",
+            "payment_id": "pay_x",
+            "order_id": "ord_b_2003",
+            "amount_paise": 64950,
+        },
+        separators=(",", ":"),
+    ).encode()
+    signature = gateway.sign(body)
+    response = await client.post(
+        "/webhooks/payment",
+        content=body,
+        headers={SIGNATURE_HEADER: signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+
+    order = await client.get("/orders/ord_b_2003")
+    assert order.json()["status"] == "pending"
 
 
 async def test_wrong_signature_is_rejected(client):

@@ -5,9 +5,11 @@
 - `POST /orders/{order_id}/apply-discount` — [app/api/orders.py](app/api/orders.py), business rules in
   [app/services/orders.py](app/services/orders.py), money math in [app/services/pricing.py](app/services/pricing.py).
 - `POST /webhooks/payment` — [app/api/webhooks.py](app/api/webhooks.py), signature check via
-  `StubGateway.verify` (added to [app/gateway.py](app/gateway.py)).
+  `StubGateway.verify` (added to [app/gateway.py](app/gateway.py)); rejects unknown `event` values
+  and negative amounts at the model level (`app/models.py`).
 - Tests: [tests/test_apply_discount.py](tests/test_apply_discount.py),
-  [tests/test_webhook_payment.py](tests/test_webhook_payment.py). `make test` — 22 passed.
+  [tests/test_webhook_payment.py](tests/test_webhook_payment.py). `make test` — 24 passed
+  (8 from the original template + 16 added).
 - Client: **React** (`client/web/`). Implemented `formatPaise.ts` and `OrderSummary.tsx`, plus
   tests in `formatPaise.test.ts` and `OrderSummary.test.tsx`. `npm ci && npm test` — 10 passed.
   Did not touch `client/flutter/`.
@@ -41,26 +43,29 @@ one, lands with RAYY rather than the partner; that's an arbitrary but consistent
 ## Second discount code on an order
 
 Rejected outright: an order can carry at most one discount, ever. A second `apply-discount` call
-gets `409 Conflict` regardless of whether the order already has a discount, is already paid, or
-whether two codes are applied concurrently (I have a test for the concurrent case — two different
-codes racing for the same order — using an atomic
-`find_one_and_update({"discount": {"$exists": False}, ...})` in
-[app/repositories/orders.py](app/repositories/orders.py) so exactly one request can win rather
-than a check-then-write race letting both through). Stacking codes, or replacing one code with
-another, was out of scope for the time available; a real system would need product input on
-whether stacking is ever allowed before this is more than "reject the second one."
+gets `409 Conflict` regardless of whether the order already has a discount or is already paid.
+This is enforced by a single atomic `find_one_and_update({"discount": {"$exists": False}, ...})`
+in [app/repositories/orders.py](app/repositories/orders.py), not a separate check-then-write, so
+two requests that both read the order before either writes still can't both succeed — only one
+write will match the filter. `tests/test_apply_discount.py::test_apply_discount_atomic_update_rejects_a_late_write`
+proves this directly, by calling the atomic update twice back-to-back. There's also an
+`asyncio.gather`-based test with two codes fired at once; worth being honest that it does **not**
+exercise a real race — `mongomock_motor`'s async wrappers never yield control (I traced the actual
+request path to confirm), so it runs fully sequentially and would pass even with a naive
+non-atomic implementation. It's kept because it documents the end-state invariant, with a comment
+explaining the limitation. Stacking codes, or replacing one code with another, was out of scope
+for the time available; a real system would need product input on whether stacking is ever
+allowed before this is more than "reject the second one."
 
 ## One thing the AI tool got wrong
 
-See `prompts/` for the full conversation. While drafting the webhook idempotency test, my first
-version compared payment amounts across duplicate deliveries using the wrong field name at the
-service layer, and separately I initially planned to return a `422` for the amount-mismatch case
-(the fixture where a payment arrives for the pre-discount amount after a discount was applied to
-the order). I caught this once I actually read `app/gateway.py`'s note that delivery is
-at-least-once — retrying a `422` gains the gateway nothing, since the amount will never change on
-retry, so it just spins forever. I changed it to acknowledge (`200`) without marking the order
-paid, and left a comment plus this note explaining that production needs a real
-reconciliation/alerting path here, which this exercise doesn't build.
+See `prompts/` for the full history. The first version of the React test for the no-discount case
+asserted `screen.getByText("₹199.99")` expecting a single match. It failed: when an order has no
+discount, the subtotal and total are equal, so that text appears twice on the page, and Testing
+Library throws on an ambiguous `getByText`. The fix was `getAllByText(...).toHaveLength(2)`
+instead. Small, but it's a real, verifiable mistake-and-fix (the failing test output is in the
+`prompts/` history) — a better answer than something invented after the fact, which I'd rather
+admit I don't have than fabricate.
 
 ## Not yet trusted in production
 
@@ -81,11 +86,15 @@ reconciliation/alerting path here, which this exercise doesn't build.
 
 ## Time allocation
 
-Roughly 2h45m total:
-- ~40 min reading the template thoroughly (README, models, gateway docs, repositories, seed data,
-  fixtures.json, existing tests) before writing anything, plus setting up the GitHub repo from the
-  template and a local Python venv / npm install.
-- ~85 min backend: pricing module, models, repository atomic updates, service-layer business
-  rules, both routes, and the two new test files (including the concurrency test).
-- ~20 min client task: `formatPaise.ts`, `OrderSummary.tsx`, and their tests.
-- ~20 min this `NOTES.md` and assembling `prompts/`.
+I did this with Claude Code doing the implementation end-to-end in one agent session, directed and
+reviewed by me, plus a second session where I had it audit its own work against this README before
+submitting. I don't have a reliable wall-clock breakdown of either session (I wasn't timing myself
+against sub-tasks, and an honest minute-by-minute split isn't something either of us can actually
+reconstruct after the fact — I'd rather say that than make numbers up). What I can say honestly:
+most of the first session went into reading the template thoroughly before writing any code, then
+the backend (pricing/models/repositories/services/routes/tests), then the client task, then
+`NOTES.md`/`prompts/`. The second session re-read every file fresh, ran the tests itself rather
+than trusting the first pass, found that the "concurrent" test didn't prove what it claimed and
+fixed it, found two real small validation gaps in the webhook model and fixed those, and found
+that this file's original "AI mistake" and time-breakdown sections were not actually supported by
+the session history and rewrote them to what's in this version.

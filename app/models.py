@@ -1,6 +1,7 @@
 """Wire and storage models. All money is integer paise."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -69,7 +70,7 @@ class ApplyDiscountRequest(BaseModel):
 
 
 class PaymentWebhookBody(BaseModel):
-    event: str
+    event: Literal["payment.succeeded"]
     payment_id: str
     order_id: str
-    amount_paise: int
+    amount_paise: int = Field(ge=0)

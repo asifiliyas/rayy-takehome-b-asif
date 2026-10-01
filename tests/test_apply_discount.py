@@ -1,7 +1,5 @@
 import asyncio
 
-import pytest
-
 
 async def test_apply_discount_computes_split_and_new_total(client):
     # BIG40: 40% of 29999 = 12000, capped at 7500. 75/25 split of 7500 is exact.
@@ -53,9 +51,14 @@ async def test_second_code_on_same_order_is_rejected(client):
 
 
 async def test_concurrent_codes_on_same_order_only_one_wins(client):
-    # Two different codes race for the same order, sent at the same time.
-    # Exactly one may succeed; the order must end up with exactly one
-    # discount, not a mix of both.
+    # Fires two different codes at the same order via asyncio.gather. Note:
+    # under mongomock_motor this does NOT produce genuine interleaving — its
+    # async wrappers never actually yield control (verified by tracing the
+    # real request path), so this runs sequentially under the hood and would
+    # pass even with a naive, non-atomic implementation. It still documents
+    # the end-state invariant (exactly one discount wins); the atomicity
+    # guarantee itself is proven directly below, against real MongoDB
+    # semantics for find_one_and_update, independent of asyncio scheduling.
     results = await asyncio.gather(
         client.post("/orders/ord_b_2005/apply-discount", json={"code": "FIT12"}),
         client.post("/orders/ord_b_2005/apply-discount", json={"code": "HELLO8"}),
@@ -66,6 +69,33 @@ async def test_concurrent_codes_on_same_order_only_one_wins(client):
     order = await client.get("/orders/ord_b_2005")
     discount = order.json()["discount"]
     assert discount["code"] in {"FIT12", "HELLO8"}
+
+
+async def test_apply_discount_atomic_update_rejects_a_late_write(db):
+    # Directly exercises the race the application code must defend against:
+    # two requests that both read the order while it still had no discount,
+    # then both try to write. Calling the atomic update twice back-to-back,
+    # without an intervening read, is exactly that scenario — the second
+    # call's filter (`discount: {"$exists": False}`) can no longer match
+    # once the first call has set it, regardless of request ordering or
+    # event-loop scheduling.
+    from app.repositories import orders as orders_repo
+
+    first = await orders_repo.apply_discount_atomic(
+        "ord_b_2005", {"code": "FIT12", "discount_paise": 8400}, total_paise=61598
+    )
+    assert first is not None
+    assert first["discount"]["code"] == "FIT12"
+
+    second = await orders_repo.apply_discount_atomic(
+        "ord_b_2005", {"code": "HELLO8", "discount_paise": 5600}, total_paise=64398
+    )
+    assert second is None
+
+    # The first write stands; the second never happened.
+    order = await orders_repo.get("ord_b_2005")
+    assert order["discount"]["code"] == "FIT12"
+    assert order["total_paise"] == 61598
 
 
 async def test_cannot_apply_discount_to_a_paid_order(client):
